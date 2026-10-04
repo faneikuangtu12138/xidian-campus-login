@@ -1,0 +1,71 @@
+[
+  {
+    "actual": {
+      "action": "login",
+      "username": "student-test",
+      "password": "{MD5}1640d493b1d386c8e55033f4c87da91f",
+      "os": "Windows 10",
+      "name": "Windows",
+      "double_stack": "0",
+      "chksum": "486a4e47ee302dcbbc0d98824307817d11b54311",
+      "info": "{SRBX1}5WcFHTCEPgPZ/kQnwuhiZFcvx+XIVO+I7Jv1JIzVgd3HyaArkr8czAHnOvkQJvUTxvjdHvYfO/aXqdv5J2RT15W+BbS/9enzsUx8/epvQsSBawc3WROKtqxi0j4ONRspbWENKMvLECm/g1VcwnHo9+==",
+      "ac_id": "1",
+      "ip": "192.0.2.100",
+      "n": "200",
+      "type": "1"
+    },
+    "input": {
+      "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "username": "student-test",
+      "acid": "1",
+      "password": "test-password",
+      "ip": "192.0.2.100"
+    }
+  },
+  {
+    "actual": {
+      "action": "login",
+      "username": "student-test",
+      "password": "{MD5}415d754ffa1ac283e88ee9055bb083bb",
+      "os": "Windows 10",
+      "name": "Windows",
+      "double_stack": "0",
+      "chksum": "d2bb571867c606dcc6dae8cf637f8cebef56aca2",
+      "info": "{SRBX1}QweeNnj3PmIsT7+7A0caRnme0SYemI9iDxJA+ebDNiqDgJ1BDIKIhjL6ExLSruAdUgFDvGSRjKnwslIiEG/OXMA0woSQn7CiJwS372SVbobnG4b+pcdgXgAlHV0KhOOayoDb2Gu4UXJBml79",
+      "ac_id": "8",
+      "ip": "192.0.2.100",
+      "n": "200",
+      "type": "1"
+    },
+    "input": {
+      "token": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "username": "student-test",
+      "acid": "8",
+      "password": "复杂密码!&\"中文🙂",
+      "ip": "192.0.2.100"
+    }
+  },
+  {
+    "actual": {
+      "action": "login",
+      "username": "student-test",
+      "password": "{MD5}3534bcbdb4840efe03d8c9f713be46ca",
+      "os": "Windows 10",
+      "name": "Windows",
+      "double_stack": "0",
+      "chksum": "7a1acab7589fb6cc36ccbd60991387cf8fec631e",
+      "info": "{SRBX1}8cTROO9upWQogtEYDizpFljq9mT4HEdgVCfCI3zDOEWLVE44zKrtp2eXdKAAIoerswMdNc182xpS5TIF07w1z70ceb+4tyWozHSRAivxobXzYJCxkJp861/ijrxM9di/UCadi3NQKsTzYLMv",
+      "ac_id": "12",
+      "ip": "192.0.2.100",
+      "n": "200",
+      "type": "1"
+    },
+    "input": {
+      "token": "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeeeffffffff0000000011111111",
+      "username": "student-test",
+      "acid": "12",
+      "password": "test\nline",
+      "ip": "192.0.2.100"
+    }
+  }
+]

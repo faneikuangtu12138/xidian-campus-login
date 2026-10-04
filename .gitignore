@@ -1,0 +1,12 @@
+# Runtime data contains account identifiers and a Windows-encrypted password.
+/data/
+/development/
+/artifacts/
+*.log
+*.tmp
+*.lnk
+settings.json
+status.json
+*.request
+.env
+.env.*

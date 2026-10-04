@@ -1,0 +1,16 @@
+name: Windows validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate scripts and protocol
+        shell: pwsh
+        run: ./tests/Test.ps1 -SkipUi
