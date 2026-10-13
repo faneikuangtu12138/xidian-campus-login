@@ -12,12 +12,18 @@ try {
         [void][Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)
         Assert (!$errors.Count) ('PowerShell parse failed: ' + $file.Name)
     }
-    # The actual login shortcut uses Windows PowerShell 5.1, not this PS7 host.
+    # Legacy command-line bootstrap must still parse under Windows PowerShell 5.1.
     $bootstrap=Join-Path $projectRoot 'Launch.ps1'
     Assert (!([IO.File]::ReadAllBytes($bootstrap) | Where-Object { $_ -gt 127 })) 'Bootstrap must remain ASCII for Windows PowerShell 5.1'
     $resolvedRuntime = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File $bootstrap -CheckRuntime
     Assert ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath ([string]$resolvedRuntime))) 'Windows PowerShell 5.1 startup entry failed'
     . (Join-Path $projectRoot 'Common.ps1')
+    & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'SilentStart.Tests.ps1')
+    Assert ($LASTEXITCODE -eq 0) 'Silent startup regression tests failed'
+    & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'EventMode.Tests.ps1')
+    Assert ($LASTEXITCODE -eq 0) 'Event mode regression tests failed'
+    & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'Repair.Tests.ps1')
+    Assert ($LASTEXITCODE -eq 0) 'Repair installation regression tests failed'
     Add-Type -Path (Join-Path $projectRoot 'DirectNetwork.cs')
     Add-Type -Path (Join-Path $projectRoot 'SrunCrypto.cs')
     $vectors=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'protocol-vectors.json') -Raw | ConvertFrom-Json

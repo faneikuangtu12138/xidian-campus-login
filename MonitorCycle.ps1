@@ -4,6 +4,13 @@ function New-MonitorState {
 function Reset-MonitorRetry($State) {
     $State.failures=0; $State.nextAttempt=[DateTimeOffset]::MinValue; $State.captiveChecks=0
 }
+function Get-MonitorWaitMilliseconds($State, $Result, [DateTimeOffset]$Now = [DateTimeOffset]::Now) {
+    if ($Result.state -in @('ONLINE','WAITING','PAUSED','NEED_SETTINGS','ACCOUNT_ERROR')) { return -1 }
+    if ($Result.state -eq 'NETWORK_ERROR' -and !$Result.ip) { return -1 }
+    if ($Result.state -eq 'AUTH_RECHECK') { return 2000 }
+    if ($State.nextAttempt -gt $Now) { return [int][Math]::Min(900000,[Math]::Max(1000,($State.nextAttempt-$Now).TotalMilliseconds)) }
+    return 30000
+}
 function Update-MonitorResume($State,[DateTimeOffset]$Now = [DateTimeOffset]::Now) {
     if (($Now-$State.lastCompleted).TotalSeconds -gt 45) {
         Reset-MonitorRetry $State

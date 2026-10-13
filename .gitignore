@@ -3,6 +3,12 @@
 /development/
 /artifacts/
 /runtime/
+/CampusLogin.exe
+/CampusLogin.build.json
+/Repair.exe
+/repair-manifest.json
+/修复说明.md
+/修复报告.json
 *.log
 *.tmp
 *.lnk

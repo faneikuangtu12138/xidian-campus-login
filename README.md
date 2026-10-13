@@ -18,7 +18,7 @@ Windows 校园网自动认证小工具，适配西安电子科技大学 `w.xidia
 3. 默认 SSID 为 `stu-xdwlan`。多个校园 SSID 用英文逗号分隔；只添加可信的校园 Wi-Fi。
 4. 点击“转为后台”或关闭窗口即可隐藏设置窗口。程序继续自动认证，登录 Windows 后自动在后台启动。
 
-安装会创建桌面和开始菜单的“西电校园网自动登录”入口。即使完全隐藏图标，点击入口也能唤回已经运行的窗口，不会产生重复的认证进程。
+安装会编译 `CampusLogin.exe`，并创建桌面和开始菜单的“西电校园网自动登录”入口。启动入口和计划任务直接运行这个 Windows GUI 程序；后台 PowerShell 和网络检查命令均使用 `CreateNoWindow` 启动，不创建终端。即使完全隐藏图标，点击入口也能唤回已经运行的窗口，不会产生重复的认证进程。手动打开程序请使用快捷方式或 `CampusLogin.exe`；`Start.cmd` 保留为命令行兼容入口。
 
 安装脚本会将 PowerShell 7 运行环境复制到安装目录的 `runtime/`，开机运行不再依赖 Codex 的缓存。这个目录不提交到 GitHub。`Launch.ps1` 优先使用独立运行环境，也兼容标准 PowerShell 7 安装及现有 Codex 附带的运行环境。可从 [PowerShell 官方安装文档](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows) 安装 PowerShell 7。
 
@@ -29,12 +29,12 @@ Windows 校园网自动认证小工具，适配西安电子科技大学 `w.xidia
 - **显示托盘图标**：控制右下角通知区域图标。关闭该选项仍会进行后台认证，可从开始菜单重新打开设置。
 - **登录 Windows 后在后台启动**：安装当前用户的启动入口与计划任务，在登录、休眠恢复时启动守护进程。允许电池供电，没有运行时长上限，也不要求 Windows 先判断网络已可用。
 - **退出程序**：停止窗口及后台认证。右上角关闭按钮只隐藏窗口。
-- 独立守护进程检查窗口和检测程序，进程退出或心跳超时后恢复它们。Windows 每分钟检查一次守护进程，即使守护进程也被结束，仍能恢复。各进程使用互斥锁避免重复运行。主动点击“退出程序”会停止恢复，重新打开程序或下次登录 Windows 时恢复运行。
+- 守护进程等待子进程退出通知，窗口或检测进程异常退出后恢复它们。计划任务管理常驻守护进程，只包含登录和恢复唤醒触发，没有每分钟保活任务；守护进程失败时才由 Windows 按失败重启规则恢复。各进程使用互斥锁避免重复运行。主动点击“退出程序”会停止恢复，重新打开程序或下次登录 Windows 时恢复运行。
 - 如果系统禁止当前用户创建计划任务，会保留启动入口并在 `autostart-state.json` 中记录 `StartupOnly`；此模式不能保证守护进程自身退出后的恢复。
 
 ## 认证与代理直连
 
-每 15 秒检查一次。物理网卡 IP、网关、DNS 或接入点变化时重新检测；休眠恢复后清除旧的重试等待时间并重新检查。已通过直连联网检测时不重复提交密码。
+开机、恢复唤醒、Wi-Fi/IP/联网状态变化以及手动请求会触发检查。Windows 连接变化和恢复通知直接唤醒等待线程；确认联网后不再定时访问网站、不执行网络命令、不定时写心跳文件。没有校园 Wi-Fi、暂停认证或缺少账号时也等待事件。只有已连接校园网但仍无法正常使用时，才安排有退避间隔的恢复重试。界面通过文件变化通知更新，守护进程通过子进程退出通知恢复，不使用空闲轮询。
 
 认证区域从学校实际返回的跳转页面获取，包括 HTTP 重定向、网页脚本、以及 HTTP 200 页面中自动提交到 `index_N.html` 的表单。读取对应区域的 `ac_id`，避免访问门户首页后误用默认区域 1。程序缓存当前 SSID、IP 和网关下的已确认入口；新跳转优先，IP 或网关改变后重新识别。不能识别入口时会明确显示状态，不猜测区域编号。
 
@@ -56,8 +56,9 @@ DNS 和 HTTPS TCP 套接字使用当前校园网物理网卡，并设置 Windows
 | --- | --- |
 | `settings.json` | 账号、Windows 用户加密的密码、SSID 与图标选项 |
 | `status.json` | 校园网检测状态 |
-| `ui-state.json` | 窗口和图标状态，用于检查后台运行 |
-| `supervisor-state.json` / `supervisor.log` | 守护进程心跳和恢复记录 |
+| `ui-state.json` | 窗口和图标状态，仅启动及可见性改变时更新 |
+| `supervisor-state.json` / `supervisor.log` | 守护进程启动信息和进程恢复记录，不定时写心跳 |
+| `event-subscriptions.json` | Windows 恢复、连接状态及 Wi-Fi 事件订阅结果 |
 | `autostart-state.json` / `startup.log` | 自启模式与启动失败类型 |
 | `portal-route.json` | 当前网络的认证区域入口 |
 | `last-auth-result.json` / `diagnostic.log` | 认证结果代码、失败阶段与异常类型，不保存认证请求地址或密码 |
@@ -83,7 +84,7 @@ DNS 和 HTTPS TCP 套接字使用当前校园网物理网卡，并设置 Windows
 ./tests/Test.ps1 -SkipUi
 ```
 
-检查包括真实 Windows PowerShell 5.1 启动入口、协议测试向量、认证区域表单与跳转解析、区域缓存失效、JSONP 时间戳、旧版设置兼容、图标设置保存、Windows 密码加密和布局尺寸。模拟网络测试覆盖掉线认证、两小时休眠恢复、旧在线记录、失效会话更新、外网故障、错误退避与诊断信息脱敏。测试均使用虚构账号和密码，不会提交校园网登录。
+检查包括 GUI 可执行文件的 PE 子系统、真实子进程的零控制台窗口句柄、原生命令输出读取、重复恢复触发、真实 Windows PowerShell 5.1 兼容入口、协议测试向量、认证区域表单与跳转解析、区域缓存失效、JSONP 时间戳、旧版设置兼容、图标设置保存、Windows 密码加密和布局尺寸。模拟网络测试覆盖掉线认证、两小时休眠恢复、旧在线记录、失效会话更新、外网故障、错误退避与诊断信息脱敏。测试均使用虚构账号和密码，不会提交校园网登录。
 
 2026-10-13 在用户授权下进行了真实注销与自动重新认证：Clash Party / Mihomo TUN 保持开启，学校返回 `login_ok`，再次确认在线状态和直连外网恢复，一次完整测试用时约 18 秒。也实际验证了检测程序、窗口和守护进程被结束后的恢复。真实跨区域漫游以及合盖两小时后的完整场景尚需自然使用验证；休眠间隔及入口变化已通过模拟回归检查。
 
@@ -94,3 +95,7 @@ DNS 和 HTTPS TCP 套接字使用当前校园网物理网卡，并设置 Windows
 取消“登录 Windows 后在后台启动”并保存，再点击“退出程序”。之后可移除程序目录及桌面、开始菜单快捷方式。删除 `data/` 会同时删除本地账号配置。
 
 Windows 接口参考：[IPPROTO_IP socket options](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options)。
+
+2026-10-13 终端闪窗及空闲活动修复：删除每分钟保活任务、固定网络轮询和界面心跳轮询，改用系统事件和进程退出事件。后台启动使用 GUI 子系统入口与 `CreateNoWindow`，自动启动失败只记录错误类型。测试运行真实后台进程，使用合成网络结果，在超过旧检测间隔的 20 秒空闲期内确认状态与日志没有写入；也验证了进程退出恢复和手动请求唤醒。修复已安装到本机 D 盘，实际计划任务没有周期触发，恢复、Wi-Fi 及联网状态通知均订阅成功。在真实已联网状态下观察 45 秒，状态和日志没有写入，三个后台进程合计 CPU 时间约 0.03 秒，窗口保持隐藏。尚未在真实重启、合盖两小时以及游戏场景中验证，也未测量实际电池耗电。
+
+Windows 事件及无控制台启动参考：[网络连接变化](https://learn.microsoft.com/en-us/windows/win32/api/netlistmgr/nn-netlistmgr-inetworkconnectionevents)、[恢复唤醒](https://learn.microsoft.com/en-us/windows/win32/api/powerbase/nf-powerbase-powerregistersuspendresumenotification)、[进程创建标志](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)。

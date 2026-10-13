@@ -5,7 +5,7 @@ Add-Type -AssemblyName System.Drawing
 [void][Windows.Forms.Application]::SetHighDpiMode([Windows.Forms.HighDpiMode]::PerMonitorV2)
 [Windows.Forms.Application]::EnableVisualStyles()
 [Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-$mutexName = if ($ValidateUi) { 'Local\XidianCampusLoginUiTest' + $PID } else { 'Local\XidianCampusLoginApp' }
+$mutexName = if ($ValidateUi) { 'Local\XidianCampusLoginUiTest' + $PID } else { Get-AppMutexName 'Local\XidianCampusLoginApp' }
 $appMutex = [Threading.Mutex]::new($false,$mutexName)
 $script:OwnMutex = $false
 try { $script:OwnMutex = $appMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $script:OwnMutex = $true }
@@ -19,18 +19,8 @@ $script:MayExit = $false; $script:LastPopup = ''; $script:LastWatchdog = [DateTi
 $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'XidianCampusLogin.lnk'
 $runtime = Join-Path $PSHOME 'pwsh.exe'
 function Start-Monitor {
-    $stopPath = Join-Path $script:DataRoot 'stop.request'
-    if (Test-Path -LiteralPath $stopPath) { Remove-Item -LiteralPath $stopPath }
-    # The independent supervisor owns both UI and monitor recovery.
-    $probe=[Threading.Mutex]::new($false,'Local\XidianCampusLoginSupervisor'); $free=$false
-    try {
-        try{$free=$probe.WaitOne(0)}catch [Threading.AbandonedMutexException]{$free=$true}
-        if($free){
-            $probe.ReleaseMutex()
-            $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\Supervisor.ps1"'
-            [void](Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru)
-        }
-    } finally {$probe.Dispose()}
+    $launch = Start-BackgroundProcess (Join-Path $PSScriptRoot 'CampusLogin.exe') '--background'
+    $launch.Dispose()
 }
 function New-Text([string]$Text, [float]$Size = 10, [bool]$Bold = $false) {
     $label = [Windows.Forms.Label]::new(); $label.Text = $Text; $label.AutoSize = $true
@@ -130,7 +120,7 @@ $menu = [Windows.Forms.ContextMenuStrip]::new()
 $showItem = $menu.Items.Add('打开设置'); $pauseItem = $menu.Items.Add('暂停自动认证'); $exitItem = $menu.Items.Add('退出后台程序')
 $tray.ContextMenuStrip = $menu
 function Show-Settings { $form.Show(); $form.WindowState = 'Normal'; [void]$form.Activate() }
-function Apply-Visibility { $form.ShowInTaskbar=$taskbarCheck.Checked; $tray.Visible=(!$ValidateUi -and $trayCheck.Checked) }
+function Apply-Visibility { $form.ShowInTaskbar=$taskbarCheck.Checked; $tray.Visible=(!$ValidateUi -and $trayCheck.Checked); Write-UiState }
 $showItem.Add_Click({ Show-Settings }); $tray.Add_DoubleClick({ Show-Settings })
 $taskbarCheck.Add_CheckedChanged({ Apply-Visibility }); $trayCheck.Add_CheckedChanged({ Apply-Visibility })
 $hideButton.Add_Click({ $form.Hide() })
@@ -152,39 +142,42 @@ $saveButton.Add_Click({
         Set-Autostart $autoCheck.Checked; Apply-Visibility
         $passwordBox.Clear(); if ($protected) { $passwordBox.PlaceholderText = '已保存，留空保持原密码' }
         [IO.File]::WriteAllText((Join-Path $script:DataRoot 'retry.request'),''); Start-Monitor
-        $statusLabel.Text = '设置已保存。后台将在 15 秒内重新检查连接。'
+        $statusLabel.Text = '设置已保存。后台已收到请求，正在重新检查连接。'
     } catch { [void][Windows.Forms.MessageBox]::Show($_.Exception.Message,'请检查设置') }
 })
 $retryButton.Add_Click({ [IO.File]::WriteAllText((Join-Path $script:DataRoot 'retry.request'),''); Start-Monitor })
 $pauseItem.Add_Click({ $fresh=Read-Settings; $fresh.enabled=!$fresh.enabled; Write-JsonAtomic $script:ConfigPath $fresh; $enabledCheck.Checked=$fresh.enabled; $pauseItem.Text=if($fresh.enabled){'暂停自动认证'}else{'恢复自动认证'} })
-function Exit-Application { $script:MayExit=$true; [IO.File]::WriteAllText((Join-Path $script:DataRoot 'stop.request'),''); $form.Close() }
+function Exit-Application { $script:MayExit=$true; [IO.File]::WriteAllText((Join-Path $script:DataRoot 'stop.request'),''); $form.Close(); $context.ExitThread() }
 $exitItem.Add_Click({ Exit-Application }); $quitButton.Add_Click({ Exit-Application })
 $form.Add_FormClosing({ param($sender,$eventArgs) if (!$script:MayExit) { $eventArgs.Cancel=$true; $form.Hide() } })
-$timer = [Windows.Forms.Timer]::new(); $timer.Interval=1000
-$timer.Add_Tick({
+$context = [Windows.Forms.ApplicationContext]::new()
+function Write-UiState {
+    if(!$ValidateUi){Write-JsonAtomic (Join-Path $script:DataRoot 'ui-state.json') @{pid=$PID;visible=$form.Visible;showTaskbarIcon=$form.ShowInTaskbar;showTrayIcon=$tray.Visible;mode='EventDriven';updated=[DateTimeOffset]::Now.ToString('o')}}
+}
+function Update-ApplicationState {
     try {
+        if(Test-Path -LiteralPath (Join-Path $script:DataRoot 'stop.request')){ $script:MayExit=$true; $form.Close(); $context.ExitThread(); return }
         $openPath=Join-Path $script:DataRoot 'open.request'
         if(Test-Path -LiteralPath $openPath){Remove-Item -LiteralPath $openPath; Show-Settings}
         $hidePath=Join-Path $script:DataRoot 'hide.request'
         if(Test-Path -LiteralPath $hidePath){Remove-Item -LiteralPath $hidePath; $form.Hide()}
-        Write-JsonAtomic (Join-Path $script:DataRoot 'ui-state.json') @{pid=$PID;visible=$form.Visible;showTaskbarIcon=$form.ShowInTaskbar;showTrayIcon=$tray.Visible;updated=[DateTimeOffset]::Now.ToString('o')}
-        $status=$null
-        if(Test-Path -LiteralPath $script:StatusPath){$status=Get-Content -LiteralPath $script:StatusPath -Raw | ConvertFrom-Json}
-        $age=if($status){([DateTimeOffset]::Now-[DateTimeOffset]::Parse($status.updated)).TotalSeconds}else{999}
-        if($age -gt 60 -and ([DateTimeOffset]::Now-$script:LastWatchdog).TotalSeconds -gt 30){
-            $probeMutex=[Threading.Mutex]::new($false,'Local\XidianCampusLoginWorker'); $free=$false
-            try { try{$free=$probeMutex.WaitOne(0)}catch [Threading.AbandonedMutexException]{$free=$true}; if($free){$probeMutex.ReleaseMutex();Start-Monitor} } finally {$probeMutex.Dispose()}
-            $script:LastWatchdog=[DateTimeOffset]::Now
-        }
-        if(!$status){return}
-        $statusTitle.Text=if($age -gt 60){'正在恢复后台检测'}elseif($status.state -eq 'ONLINE'){'校园网已联网'}elseif($status.state -eq 'PAUSED'){'自动认证已暂停'}else{'校园网连接检测'}
-        $statusLabel.Text=if($age -gt 60){'连接状态尚未更新，程序会自动尝试恢复。'}else{$status.message}
+        if(!(Test-Path -LiteralPath $script:StatusPath)){return}
+        $status=Get-Content -LiteralPath $script:StatusPath -Raw | ConvertFrom-Json
+        $statusTitle.Text=if($status.state -eq 'ONLINE'){'校园网已联网'}elseif($status.state -eq 'PAUSED'){'自动认证已暂停'}else{'校园网连接检测'}
+        $statusLabel.Text=$status.message
         $detailLabel.Text=if($status.ip){$status.ssid+'   ·   '+$status.ip}else{'等待连接配置的校园 Wi-Fi'}
-        $statusTitle.ForeColor=if($status.state -eq 'ONLINE' -and $age -lt 60){[Drawing.Color]::FromArgb(23,105,68)}else{[Drawing.Color]::FromArgb(134,89,26)}
+        $statusTitle.ForeColor=if($status.state -eq 'ONLINE'){[Drawing.Color]::FromArgb(23,105,68)}else{[Drawing.Color]::FromArgb(134,89,26)}
         $popupKey=$status.state+'|'+$status.message
-        if($tray.Visible -and $age -lt 60 -and $status.state -in @('ACCOUNT_ERROR','LOGIN_FAILED','NEED_SETTINGS') -and $script:LastPopup -ne $popupKey){$tray.ShowBalloonTip(5000,'校园网自动登录',$status.message,[Windows.Forms.ToolTipIcon]::Info);$script:LastPopup=$popupKey}
+        if($tray.Visible -and $status.state -in @('ACCOUNT_ERROR','LOGIN_FAILED','NEED_SETTINGS') -and $script:LastPopup -ne $popupKey){$tray.ShowBalloonTip(5000,'校园网自动登录',$status.message,[Windows.Forms.ToolTipIcon]::Info);$script:LastPopup=$popupKey}
     }catch{}
-})
+}
+$watcher=[IO.FileSystemWatcher]::new($script:DataRoot)
+$watcher.NotifyFilter=[IO.NotifyFilters]'FileName, LastWrite'
+$watcher.SynchronizingObject=$form
+$onChange={param($sender,$eventArgs) if($eventArgs.Name -in @('status.json','open.request','hide.request','stop.request')){Update-ApplicationState}}
+$watcher.Add_Created($onChange);$watcher.Add_Changed($onChange);$watcher.Add_Renamed($onChange)
+$form.Add_VisibleChanged({Write-UiState})
+$form.Add_FormClosed({$context.ExitThread()})
 $form.ResumeLayout($true)
 $form.Add_Shown({
     $available = [Windows.Forms.Screen]::FromControl($form).WorkingArea
@@ -199,8 +192,11 @@ try {
         [pscustomobject]@{passwordMasked=$passwordBox.UseSystemPasswordChar;layout='TableLayoutPanel';dpi=$form.DeviceDpi;scale=$UiScale;taskbarOptionPresent=([bool]$taskbarCheck);trayOptionPresent=([bool]$trayCheck);buttonsFit=$buttonsFit;footerVisible=($footer.Bounds.Bottom -le $root.Height);formWidth=$form.Width;formHeight=$form.Height} | ConvertTo-Json
         $form.Hide()
     }else{
-        Start-Monitor; $timer.Start()
-        if($Background){$form.Add_Shown({$form.Hide()})}
-        [Windows.Forms.Application]::Run($form)
+        # Create the dispatch handle without showing/activating a background form.
+        [void]$form.Handle
+        $watcher.EnableRaisingEvents=$true
+        Write-UiState; Update-ApplicationState
+        if(!$Background){$form.Show()}
+        [Windows.Forms.Application]::Run($context)
     }
-}finally{$timer.Stop();$timer.Dispose();$tray.Visible=$false;$tray.Dispose();$form.Dispose();if($script:OwnMutex){$appMutex.ReleaseMutex()};$appMutex.Dispose()}
+}finally{$watcher.Dispose();$context.Dispose();$tray.Visible=$false;$tray.Dispose();$form.Dispose();if($script:OwnMutex){$appMutex.ReleaseMutex()};$appMutex.Dispose()}

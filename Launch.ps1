@@ -14,13 +14,16 @@ try {
     $runtime = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (!$runtime) { throw 'PowerShell 7.4 or later is required.' }
     if ($CheckRuntime) { Write-Output $runtime; exit 0 }
-    $stopPath = Join-Path $dataRoot 'stop.request'
-    if (Test-Path -LiteralPath $stopPath) { Remove-Item -LiteralPath $stopPath }
-    if (!$Background) { [IO.File]::WriteAllText((Join-Path $dataRoot 'open.request'),'') }
-    $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\Supervisor.ps1"'
-    if (!$Background) { $arguments += ' -OpenSettings' }
-    $process = Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru
-    if ($process.WaitForExit(1500) -and $process.ExitCode -ne 0) { throw 'Background supervisor exited during startup.' }
+    $launcher = Join-Path $PSScriptRoot 'CampusLogin.exe'
+    if (!(Test-Path -LiteralPath $launcher)) { throw 'Silent launcher is missing. Run Install.ps1 first.' }
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $launcher
+    $info.WorkingDirectory = $PSScriptRoot
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    if ($Background) { $info.Arguments = '--background' }
+    $process = [Diagnostics.Process]::Start($info)
+    try { $process.WaitForExit(); if ($process.ExitCode -ne 0) { throw 'Silent launcher failed.' } } finally { $process.Dispose() }
 } catch {
     [IO.File]::AppendAllText((Join-Path $dataRoot 'startup.log'),([DateTimeOffset]::Now.ToString('o') + ' STARTUP_FAILED ' + $_.Exception.GetType().Name + "`r`n"))
     if (!$Background) {

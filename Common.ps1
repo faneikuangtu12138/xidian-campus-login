@@ -5,6 +5,14 @@ $script:ConfigPath = Join-Path $script:DataRoot 'settings.json'
 $script:StatusPath = Join-Path $script:DataRoot 'status.json'
 $script:LogPath = Join-Path $script:DataRoot 'activity.log'
 [void][IO.Directory]::CreateDirectory($script:DataRoot)
+if (!('CampusLogin.BackgroundProcess' -as [type])) { Add-Type -Path (Join-Path $script:ProgramRoot 'BackgroundProcess.cs') }
+if (!('CampusLogin.ActivitySignals' -as [type])) { Add-Type -Path (Join-Path $script:ProgramRoot 'ActivitySignals.cs') }
+function Start-BackgroundProcess([string]$FilePath, [string]$Arguments) {
+    return [CampusLogin.BackgroundProcess]::Start($FilePath, $Arguments, $script:ProgramRoot)
+}
+function Get-AppMutexName([string]$Name) {
+    return [CampusLogin.BackgroundProcess]::MutexName($Name,$script:ProgramRoot,$script:DataRoot)
+}
 function Write-JsonAtomic($Path, $Value) {
     $temp = $Path + '.' + $PID + '.tmp'
     [IO.File]::WriteAllText($temp, ($Value | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
@@ -24,27 +32,26 @@ function Set-Autostart([bool]$Enabled) {
     if ($Enabled) {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($startupPath)
-        $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-        $shortcut.Arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script:ProgramRoot + '\Launch.ps1" -Background'
+        $launcher = Join-Path $script:ProgramRoot 'CampusLogin.exe'
+        if (!(Test-Path -LiteralPath $launcher)) { throw 'Silent launcher is missing. Run Build-Launcher.ps1 or Install.ps1 first.' }
+        $shortcut.TargetPath = $launcher
+        $shortcut.Arguments = '--background'
         $shortcut.WorkingDirectory = $script:ProgramRoot
         $shortcut.WindowStyle = 7
         $shortcut.Description = '西电校园网自动登录（后台启动）'
         $shortcut.Save()
-        # The scheduled task owns the long-running supervisor. Repetition recovers
-        # even the supervisor itself; no network-ready condition or battery cutoff.
-        $runtime = Join-Path $PSHOME 'pwsh.exe'
+        # OS triggers only; there is no calendar/repetition trigger. Task Scheduler
+        # restarts a failed supervisor without launching an idle keepalive process.
         $escape = { param($text) [Security.SecurityElement]::Escape([string]$text) }
         $sid = & $escape ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
-        $command = & $escape $runtime
-        $arguments = & $escape ('-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script:ProgramRoot + '\Supervisor.ps1"')
+        $command = & $escape $launcher
+        $arguments = '--supervise'
         $directory = & $escape $script:ProgramRoot
-        $boundary = [DateTime]::Today.ToString('yyyy-MM-ddTHH:mm:ss')
         $subscription = & $escape '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[(Provider[@Name="Microsoft-Windows-Power-Troubleshooter"] and EventID=1) or (Provider[@Name="Microsoft-Windows-Kernel-Power"] and EventID=107)]]</Select></Query></QueryList>'
         $xml = @"
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled><UserId>$sid</UserId></LogonTrigger>
-    <CalendarTrigger><Repetition><Interval>PT1M</Interval><Duration>P1D</Duration><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>$boundary</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
     <EventTrigger><Enabled>true</Enabled><Subscription>$subscription</Subscription></EventTrigger>
   </Triggers>
   <Principals><Principal id="CurrentUser"><UserId>$sid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
@@ -69,7 +76,7 @@ function Set-Autostart([bool]$Enabled) {
 }
 function Get-CampusAdapter($Settings) {
     # The SSID comparison prevents submitting credentials on hotel/home Wi-Fi.
-    $wlan = (& "$env:SystemRoot\System32\netsh.exe" wlan show interfaces 2>$null) -join "`n"
+    $wlan = [CampusLogin.BackgroundProcess]::Capture("$env:SystemRoot\System32\netsh.exe", 'wlan show interfaces', $script:ProgramRoot, 8000)
     $ssidMatch = [regex]::Match($wlan, '(?m)^\s*SSID\s*:\s*(.+?)\s*$')
     $ssid = if ($ssidMatch.Success) { $ssidMatch.Groups[1].Value.Trim() } else { '' }
     $guidMatch = [regex]::Match($wlan, '(?im)^\s*GUID\s*:\s*([a-f0-9-]+)\s*$')
