@@ -30,16 +30,9 @@ function Set-Autostart([bool]$Enabled) {
     $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'XidianCampusLogin.lnk'
     $taskName = 'XidianCampusLogin-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if ($Enabled) {
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($startupPath)
         $launcher = Join-Path $script:ProgramRoot 'CampusLogin.exe'
         if (!(Test-Path -LiteralPath $launcher)) { throw 'Silent launcher is missing. Run Build-Launcher.ps1 or Install.ps1 first.' }
-        $shortcut.TargetPath = $launcher
-        $shortcut.Arguments = '--background'
-        $shortcut.WorkingDirectory = $script:ProgramRoot
-        $shortcut.WindowStyle = 7
-        $shortcut.Description = '西电校园网自动登录（后台启动）'
-        $shortcut.Save()
+        [CampusLogin.BackgroundProcess]::SaveShortcut($startupPath,$launcher,'--background',$script:ProgramRoot,'西电校园网自动登录（后台启动）')
         # OS triggers only; there is no calendar/repetition trigger. Task Scheduler
         # restarts a failed supervisor without launching an idle keepalive process.
         $escape = { param($text) [Security.SecurityElement]::Escape([string]$text) }

@@ -18,7 +18,7 @@ Windows 校园网自动认证小工具，适配西安电子科技大学 `w.xidia
 3. 默认 SSID 为 `stu-xdwlan`。多个校园 SSID 用英文逗号分隔；只添加可信的校园 Wi-Fi。
 4. 点击“转为后台”或关闭窗口即可隐藏设置窗口。程序继续自动认证，登录 Windows 后自动在后台启动。
 
-安装会编译 `CampusLogin.exe`，并创建桌面和开始菜单的“西电校园网自动登录”入口。启动入口和计划任务直接运行这个 Windows GUI 程序；后台 PowerShell 和网络检查命令均使用 `CreateNoWindow` 启动，不创建终端。即使完全隐藏图标，点击入口也能唤回已经运行的窗口，不会产生重复的认证进程。手动打开程序请使用快捷方式或 `CampusLogin.exe`；`Start.cmd` 保留为命令行兼容入口。
+安装会编译 `CampusLogin.exe`，并创建桌面和开始菜单的“西电校园网自动登录”入口。快捷方式使用 Windows 的 Unicode 接口保存，支持不同系统语言下的中文目录及文件名。启动入口和计划任务直接运行这个 Windows GUI 程序；后台 PowerShell 和网络检查命令均使用 `CreateNoWindow` 启动，不创建终端。即使完全隐藏图标，点击入口也能唤回已经运行的窗口，不会产生重复的认证进程。手动打开程序请使用快捷方式或 `CampusLogin.exe`；`Start.cmd` 保留为命令行兼容入口。
 
 安装脚本会将 PowerShell 7 运行环境复制到安装目录的 `runtime/`，开机运行不再依赖 Codex 的缓存。这个目录不提交到 GitHub。`Launch.ps1` 优先使用独立运行环境，也兼容标准 PowerShell 7 安装及现有 Codex 附带的运行环境。可从 [PowerShell 官方安装文档](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows) 安装 PowerShell 7。
 

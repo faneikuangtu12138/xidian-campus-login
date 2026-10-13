@@ -38,13 +38,8 @@ foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,[Secu
 [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($script:DataRoot),$acl)
 $settings = Read-Settings; $settings.version=2
 Write-JsonAtomic $script:ConfigPath $settings
-$shell = New-Object -ComObject WScript.Shell
 function Write-AppShortcut([string]$Path) {
-    $shortcut = $shell.CreateShortcut($Path)
-    $shortcut.TargetPath = Join-Path $destinationRoot 'CampusLogin.exe'
-    $shortcut.Arguments = ''
-    $shortcut.WorkingDirectory = $destinationRoot; $shortcut.WindowStyle=7
-    $shortcut.Description = '西电校园网自动登录 · 打开设置'; $shortcut.Save()
+    [CampusLogin.BackgroundProcess]::SaveShortcut($Path,(Join-Path $destinationRoot 'CampusLogin.exe'),'',$destinationRoot,'西电校园网自动登录 · 打开设置')
 }
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) '西电校园网自动登录.lnk'
 $menuFolder = Join-Path ([Environment]::GetFolderPath('Programs')) '西电校园网自动登录'

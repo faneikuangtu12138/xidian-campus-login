@@ -5,6 +5,15 @@ function Assert($Condition, $Message) { if (!$Condition) { throw $Message } }
 & (Join-Path $projectRoot 'Build-Launcher.ps1')
 $fixture = Join-Path $script:DataRoot 'silent-start-fixture'
 [void][IO.Directory]::CreateDirectory($fixture)
+$unicodeFolder=Join-Path $fixture '中文路径 with spaces'
+[void][IO.Directory]::CreateDirectory($unicodeFolder)
+$unicodeLink=Join-Path $unicodeFolder '校园网自动登录.lnk'
+$unicodeTarget=Join-Path $unicodeFolder '中文程序.exe'
+[IO.File]::WriteAllText($unicodeTarget,'Synthetic shortcut target; never executed')
+[CampusLogin.BackgroundProcess]::SaveShortcut($unicodeLink,$unicodeTarget,'--background',$unicodeFolder,'中文快捷方式')
+Assert (Test-Path -LiteralPath $unicodeLink) 'Unicode shortcut file was not saved'
+Assert ([CampusLogin.BackgroundProcess]::ReadShortcutTarget($unicodeLink) -eq $unicodeTarget) 'Unicode shortcut target did not round-trip'
+Assert ([CampusLogin.BackgroundProcess]::ReadShortcutArguments($unicodeLink) -eq '--background') 'Shortcut arguments did not round-trip'
 $probeSource = Join-Path $fixture 'ConsoleProbe.cs'
 [IO.File]::WriteAllText($probeSource, @'
 using System;
@@ -74,4 +83,4 @@ foreach ($path in @('Common.ps1','Supervisor.ps1','App.ps1')) {
 $common = [IO.File]::ReadAllText((Join-Path $projectRoot 'Common.ps1'))
 Assert ($common -match "\$arguments = '--supervise'") 'Scheduled task must invoke GUI recovery entry'
 Assert ($common -notmatch '\(&.*netsh\.exe') 'Network polling still launches netsh through the shell'
-Write-Output 'PASS: GUI entry, 13 real PowerShell/native launches without console handles, pipe draining, 5 repeated recovery triggers and explicit exit.'
+Write-Output 'PASS: Unicode shortcut paths and targets, GUI entry, 13 real PowerShell/native launches without console handles, pipe draining, 5 repeated recovery triggers and explicit exit.'

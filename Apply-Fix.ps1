@@ -104,10 +104,8 @@ try {
     $updatedTask = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
     $repairStage = 'verify-startup-entries'
     if ($updatedTask.State -eq 'Disabled' -or $updatedTask.Actions.Count -ne 1 -or $updatedTask.Actions[0].Execute -ne (Join-Path $target 'CampusLogin.exe') -or $updatedTask.Actions[0].Arguments -ne '--supervise') { throw 'Silent scheduled task verification failed.' }
-    $shell = New-Object -ComObject WScript.Shell
     foreach ($path in $shortcutPaths) {
-        $shortcut = $shell.CreateShortcut($path)
-        if ($shortcut.TargetPath -ne (Join-Path $target 'CampusLogin.exe')) { throw 'Silent shortcut verification failed.' }
+        if ([CampusLogin.BackgroundProcess]::ReadShortcutTarget($path) -ne (Join-Path $target 'CampusLogin.exe')) { throw 'Silent shortcut verification failed.' }
     }
     # Fresh heartbeats prevent mistaking a stale process for a completed update.
     $started = [DateTimeOffset]::Now

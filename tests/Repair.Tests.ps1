@@ -39,8 +39,7 @@ try {
 param($Destination,[switch]$NoLaunch)
 $global:RepairFixture.task=[pscustomobject]@{State='Ready';Actions=@([pscustomobject]@{Execute=(Join-Path $Destination 'CampusLogin.exe');Arguments='--supervise'})}
 $paths=@((Join-Path $global:RepairFixture.startup 'XidianCampusLogin.lnk'),(Join-Path $global:RepairFixture.desktop '西电校园网自动登录.lnk'),(Join-Path $global:RepairFixture.programs '西电校园网自动登录\西电校园网自动登录.lnk'))
-$shell=New-Object -ComObject WScript.Shell
-foreach($path in $paths){[void][IO.Directory]::CreateDirectory((Split-Path $path -Parent));$shortcut=$shell.CreateShortcut($path);$shortcut.TargetPath=Join-Path $Destination 'CampusLogin.exe';$shortcut.Save()}
+foreach($path in $paths){[void][IO.Directory]::CreateDirectory((Split-Path $path -Parent));[CampusLogin.BackgroundProcess]::SaveShortcut($path,(Join-Path $Destination 'CampusLogin.exe'),'',$Destination,'Synthetic shortcut')}
 '@
         [IO.File]::WriteAllText((Join-Path $payload 'Install.ps1'),$fakeInstall,[Text.UTF8Encoding]::new($false))
         $manifest=foreach($name in @('Common.ps1','BackgroundProcess.cs','ActivitySignals.cs','CampusLogin.exe','Install.ps1')){
