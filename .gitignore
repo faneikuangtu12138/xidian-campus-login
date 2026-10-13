@@ -2,6 +2,7 @@
 /data/
 /development/
 /artifacts/
+/runtime/
 *.log
 *.tmp
 *.lnk

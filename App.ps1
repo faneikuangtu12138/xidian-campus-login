@@ -21,8 +21,16 @@ $runtime = Join-Path $PSHOME 'pwsh.exe'
 function Start-Monitor {
     $stopPath = Join-Path $script:DataRoot 'stop.request'
     if (Test-Path -LiteralPath $stopPath) { Remove-Item -LiteralPath $stopPath }
-    $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\Monitor.ps1"'
-    [void](Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru)
+    # The independent supervisor owns both UI and monitor recovery.
+    $probe=[Threading.Mutex]::new($false,'Local\XidianCampusLoginSupervisor'); $free=$false
+    try {
+        try{$free=$probe.WaitOne(0)}catch [Threading.AbandonedMutexException]{$free=$true}
+        if($free){
+            $probe.ReleaseMutex()
+            $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\Supervisor.ps1"'
+            [void](Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru)
+        }
+    } finally {$probe.Dispose()}
 }
 function New-Text([string]$Text, [float]$Size = 10, [bool]$Bold = $false) {
     $label = [Windows.Forms.Label]::new(); $label.Text = $Text; $label.AutoSize = $true

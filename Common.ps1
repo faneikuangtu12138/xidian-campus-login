@@ -20,6 +20,7 @@ function Read-Settings {
 }
 function Set-Autostart([bool]$Enabled) {
     $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'XidianCampusLogin.lnk'
+    $taskName = 'XidianCampusLogin-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if ($Enabled) {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($startupPath)
@@ -29,7 +30,42 @@ function Set-Autostart([bool]$Enabled) {
         $shortcut.WindowStyle = 7
         $shortcut.Description = '西电校园网自动登录（后台启动）'
         $shortcut.Save()
-    } elseif (Test-Path -LiteralPath $startupPath) { Remove-Item -LiteralPath $startupPath }
+        # The scheduled task owns the long-running supervisor. Repetition recovers
+        # even the supervisor itself; no network-ready condition or battery cutoff.
+        $runtime = Join-Path $PSHOME 'pwsh.exe'
+        $escape = { param($text) [Security.SecurityElement]::Escape([string]$text) }
+        $sid = & $escape ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        $command = & $escape $runtime
+        $arguments = & $escape ('-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script:ProgramRoot + '\Supervisor.ps1"')
+        $directory = & $escape $script:ProgramRoot
+        $boundary = [DateTime]::Today.ToString('yyyy-MM-ddTHH:mm:ss')
+        $subscription = & $escape '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[(Provider[@Name="Microsoft-Windows-Power-Troubleshooter"] and EventID=1) or (Provider[@Name="Microsoft-Windows-Kernel-Power"] and EventID=107)]]</Select></Query></QueryList>'
+        $xml = @"
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled><UserId>$sid</UserId></LogonTrigger>
+    <CalendarTrigger><Repetition><Interval>PT1M</Interval><Duration>P1D</Duration><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>$boundary</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
+    <EventTrigger><Enabled>true</Enabled><Subscription>$subscription</Subscription></EventTrigger>
+  </Triggers>
+  <Principals><Principal id="CurrentUser"><UserId>$sid</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowHardTerminate>true</AllowHardTerminate><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>true</Hidden><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
+  <Actions Context="CurrentUser"><Exec><Command>$command</Command><Arguments>$arguments</Arguments><WorkingDirectory>$directory</WorkingDirectory></Exec></Actions>
+</Task>
+"@
+        try {
+            [void](Register-ScheduledTask -TaskName $taskName -Xml $xml -Force -ErrorAction Stop)
+            Write-JsonAtomic (Join-Path $script:DataRoot 'autostart-state.json') @{mode='ScheduledTaskAndStartup';task=$taskName;updated=[DateTimeOffset]::Now.ToString('o')}
+        } catch {
+            # Non-admin machines may forbid registering tasks. The fixed startup
+            # entry still starts the supervisor; expose the reduced recovery mode.
+            Write-JsonAtomic (Join-Path $script:DataRoot 'autostart-state.json') @{mode='StartupOnly';error=$_.Exception.GetType().Name;updated=[DateTimeOffset]::Now.ToString('o')}
+            [IO.File]::AppendAllText((Join-Path $script:DataRoot 'startup.log'),([DateTimeOffset]::Now.ToString('o')+' TASK_REGISTRATION_FAILED type='+$_.Exception.GetType().Name+"`r`n"))
+        }
+    } else {
+        if (Test-Path -LiteralPath $startupPath) { Remove-Item -LiteralPath $startupPath }
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($task) { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
+    }
 }
 function Get-CampusAdapter($Settings) {
     # The SSID comparison prevents submitting credentials on hotel/home Wi-Fi.
@@ -56,7 +92,7 @@ function Convert-PortalJson([string]$Text) {
     return $clean | ConvertFrom-Json
 }
 function Get-PortalJson($Net, [string]$Path, $Fields = @{}) {
-    $pairs = @('callback=campus', '_=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    $pairs = @('callback=campus', ('_=' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()))
     foreach ($key in $Fields.Keys) { $pairs += [Uri]::EscapeDataString([string]$key) + '=' + [Uri]::EscapeDataString([string]$Fields[$key]) }
     $response = $Net.Get('https://w.xidian.edu.cn' + $Path + '?' + ($pairs -join '&'))
     try {
@@ -84,12 +120,67 @@ function Get-PortalContext($Net, [string]$StartUrl = 'https://w.xidian.edu.cn/')
     }
     throw '校园网认证跳转次数过多。'
 }
+function Get-CaptivePortalRedirect([string]$Body,[string]$Location = '') {
+    $headerUrl=''
+    if ($Location) {
+        $uri=$null
+        if ([Uri]::TryCreate($Location,[UriKind]::Absolute,[ref]$uri) -and $uri.Host -eq 'w.xidian.edu.cn' -and $uri.Port -in @(80,443) -and !$uri.UserInfo) { $headerUrl=$uri.AbsoluteUri; if(Test-ControllerUrl $headerUrl){return $headerUrl} }
+    }
+    $text=[Net.WebUtility]::HtmlDecode($Body).Replace('\/','/')
+    try { $text=[Uri]::UnescapeDataString($text) } catch { }
+    $matches=[regex]::Matches($text,'(?i)https?://w\.xidian\.edu\.cn(?::(?:80|443))?(?=[/?#\s"''<>]|$)[^\s"''<>\\]*')
+    foreach($match in $matches){$candidate=$match.Value.TrimEnd(')', ';');if(Test-ControllerUrl $candidate){return $candidate}}
+    if($headerUrl){return $headerUrl}
+    if($matches.Count){return $matches[0].Value.TrimEnd(')', ';')}
+    return ''
+}
+function Test-ControllerUrl([string]$Url) {
+    return $Url -match '(?:[?&]ac_id=\d+(?:&|$)|/index_\d+\.html(?:[?]|$))'
+}
+function Get-AdapterRouteKey($Adapter) {
+    # Neighboring Wi-Fi APs may roam without changing the assigned IP/controller.
+    # A fresh captive redirect always takes precedence; a changed IP/gateway
+    # invalidates this fallback instead of copying it to a different region.
+    $identity=$Adapter.ssid+'|'+$Adapter.gateway+'|'+$Adapter.ip
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity)))
+}
+function Save-PortalRoute($Adapter,[string]$Url) {
+    $uri=[Uri]$Url
+    if ($uri.Host -ne 'w.xidian.edu.cn' -or $uri.Port -notin @(80,443) -or $uri.UserInfo) { return }
+    $match=[regex]::Match($uri.Query,'(?:^|[?&])ac_id=(\d+)(?:&|$)')
+    if (!$match.Success) { $match=[regex]::Match($uri.AbsolutePath,'^/index_(\d+)\.html$') }
+    if (!$match.Success) { return }
+    $path=Join-Path $script:DataRoot 'portal-route.json'
+    # Strip everything except the controller ID; do not persist redirect tokens.
+    Write-JsonAtomic $path @{key=(Get-AdapterRouteKey $Adapter);url=('https://w.xidian.edu.cn/srun_portal_pc?ac_id='+$match.Groups[1].Value);updated=[DateTimeOffset]::Now.ToString('o')}
+}
+function Get-SavedPortalRoute($Adapter) {
+    try {
+        $route=Get-Content -LiteralPath (Join-Path $script:DataRoot 'portal-route.json') -Raw | ConvertFrom-Json
+        if ($route.key -eq (Get-AdapterRouteKey $Adapter)) { return [string]$route.url }
+    } catch { }
+    return ''
+}
 function Test-DirectInternet($Net) {
     $r = $Net.Get('http://www.msftconnecttest.com/connecttest.txt')
     try {
         $body = $r.Content.ReadAsStringAsync().GetAwaiter().GetResult().Trim()
-        return @{ online = ([int]$r.StatusCode -eq 200 -and $body -eq 'Microsoft Connect Test'); redirect = if ($r.Headers.Location) { $r.Headers.Location.ToString() } else { '' } }
+        $location = if ($r.Headers.Location) { $r.Headers.Location.ToString() } else { '' }
+        $redirect = Get-CaptivePortalRedirect $body $location
+        $captive = ([bool]$redirect -or $body -match '(?i)(?:https?://)?w\.xidian\.edu\.cn(?:/|["''])')
+        return @{ online = ([int]$r.StatusCode -eq 200 -and $body -eq 'Microsoft Connect Test'); redirect = $redirect; captive = $captive }
     } finally { $r.Dispose() }
+}
+function Write-SafeDiagnostic([string]$Stage, $Exception) {
+    # Never log exception messages, response bodies, usernames or request URLs.
+    $types = @(); $socketCode = ''
+    for ($inner = $Exception; $inner -and $types.Count -lt 6; $inner = $inner.InnerException) {
+        $types += $inner.GetType().Name
+        if ($inner -is [Net.Sockets.SocketException]) { $socketCode = [string]$inner.SocketErrorCode }
+    }
+    $path = Join-Path $script:DataRoot 'diagnostic.log'
+    if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).Length -gt 524288) { [IO.File]::WriteAllText($path,'') }
+    [IO.File]::AppendAllText($path,([DateTimeOffset]::Now.ToString('o')+' stage='+$Stage+' types='+($types -join '>')+' socket='+$socketCode+"`r`n"))
 }
 function Save-Status([string]$State, [string]$Message, $Adapter, [string]$PortalIP = '') {
     $status = [ordered]@{ state = $State; message = $Message; updated = [DateTimeOffset]::Now.ToString('o'); pid = $PID; ssid = ''; adapter = ''; ip = ''; portalIP = $PortalIP }

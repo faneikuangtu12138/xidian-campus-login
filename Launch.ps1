@@ -1,18 +1,31 @@
-param([switch]$Background)
+param([switch]$Background, [switch]$CheckRuntime)
+# ASCII-only bootstrap: Windows PowerShell 5.1 reads BOM-less scripts as ANSI.
 $ErrorActionPreference = 'Stop'
-# Resolve PowerShell 7 each time instead of embedding a versioned Codex runtime path.
-$candidates = @(
-    (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'),
-    (Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.exe')
-)
-$found = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-if ($found) { $candidates = @($found.Source) + $candidates }
-$runtime = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (!$runtime) {
-    Add-Type -AssemblyName System.Windows.Forms
-    [void][Windows.Forms.MessageBox]::Show('需要 PowerShell 7。当前电脑的 Codex 自带该运行环境；若已卸载 Codex，请安装 PowerShell 7 后重试。','校园网自动登录')
+$dataRoot = if ($env:XIDIAN_CAMPUS_DATA) { $env:XIDIAN_CAMPUS_DATA } else { Join-Path $PSScriptRoot 'data' }
+try {
+    [void][IO.Directory]::CreateDirectory($dataRoot)
+    $candidates = @(
+        (Join-Path $PSScriptRoot 'runtime\pwsh.exe'),
+        (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'),
+        (Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.exe')
+    )
+    $found = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($found) { $candidates += $found.Source }
+    $runtime = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (!$runtime) { throw 'PowerShell 7.4 or later is required.' }
+    if ($CheckRuntime) { Write-Output $runtime; exit 0 }
+    $stopPath = Join-Path $dataRoot 'stop.request'
+    if (Test-Path -LiteralPath $stopPath) { Remove-Item -LiteralPath $stopPath }
+    if (!$Background) { [IO.File]::WriteAllText((Join-Path $dataRoot 'open.request'),'') }
+    $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\Supervisor.ps1"'
+    if (!$Background) { $arguments += ' -OpenSettings' }
+    $process = Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    if ($process.WaitForExit(1500) -and $process.ExitCode -ne 0) { throw 'Background supervisor exited during startup.' }
+} catch {
+    [IO.File]::AppendAllText((Join-Path $dataRoot 'startup.log'),([DateTimeOffset]::Now.ToString('o') + ' STARTUP_FAILED ' + $_.Exception.GetType().Name + "`r`n"))
+    if (!$Background) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][Windows.Forms.MessageBox]::Show('Campus login could not start. Check data\startup.log and data\supervisor.log.','Campus Login')
+    }
     exit 1
 }
-$arguments = '-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSScriptRoot + '\App.ps1"'
-if ($Background) { $arguments += ' -Background' }
-Start-Process -FilePath $runtime -ArgumentList $arguments -WindowStyle Hidden
