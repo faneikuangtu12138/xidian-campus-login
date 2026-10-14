@@ -1,10 +1,24 @@
-param([switch]$Background, [switch]$ValidateUi, [string]$RenderUi, [double]$UiScale = 1)
+param([switch]$Background, [switch]$ValidateUi, [string]$RenderUi, [double]$UiScale = 1, [ValidateSet('Hide','Reload','Restore')][string]$ValidateIconSettings)
 . "$PSScriptRoot\Common.ps1"
+if($ValidateIconSettings){
+    if(!$env:XIDIAN_CAMPUS_DATA -or $script:DataRoot -eq (Join-Path $PSScriptRoot 'data')){throw 'Icon validation requires isolated data.'}
+    $ValidateUi = $true
+}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [void][Windows.Forms.Application]::SetHighDpiMode([Windows.Forms.HighDpiMode]::PerMonitorV2)
 [Windows.Forms.Application]::EnableVisualStyles()
 [Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
+if($ValidateUi -and !$ValidateIconSettings){
+    Add-Type -ReferencedAssemblies @([Windows.Forms.Form].Assembly.Location,[ComponentModel.Component].Assembly.Location,[Drawing.Graphics].Assembly.Location) -TypeDefinition @'
+public sealed class CampusLoginPreviewForm : System.Windows.Forms.Form {
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override System.Windows.Forms.CreateParams CreateParams {
+        get { var value = base.CreateParams; value.ExStyle |= 0x08000000 | 0x00000080; return value; }
+    }
+}
+'@
+}
 $mutexName = if ($ValidateUi) { 'Local\XidianCampusLoginUiTest' + $PID } else { Get-AppMutexName 'Local\XidianCampusLoginApp' }
 $appMutex = [Threading.Mutex]::new($false,$mutexName)
 $script:OwnMutex = $false
@@ -14,8 +28,8 @@ if (!$script:OwnMutex) {
     [IO.File]::WriteAllText((Join-Path $script:DataRoot $request),'')
     $appMutex.Dispose(); exit
 }
-$settings = if ($ValidateUi) { [pscustomobject]@{ ssids=@('stu-xdwlan'); username=''; protectedPassword=''; enabled=$true; showTaskbarIcon=$true; showTrayIcon=$true } } else { Read-Settings }
-$script:MayExit = $false; $script:LastPopup = ''; $script:LastWatchdog = [DateTimeOffset]::MinValue
+$settings = if ($ValidateUi -and !$ValidateIconSettings) { [pscustomobject]@{ ssids=@('stu-xdwlan'); username=''; protectedPassword=''; enabled=$true; hideTaskbarIcons=$false; showTaskbarIcon=$true; showTrayIcon=$true } } else { Read-Settings }
+$script:MayExit = $false; $script:LastPopup = ''
 $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'XidianCampusLogin.lnk'
 $runtime = Join-Path $PSHOME 'pwsh.exe'
 function Start-Monitor {
@@ -52,12 +66,13 @@ function New-Action([string]$Text) {
     $button.Margin = [Windows.Forms.Padding]::new(0,0,12,6)
     return $button
 }
-$form = [Windows.Forms.Form]::new(); $form.SuspendLayout()
+$form = if($ValidateUi -and !$ValidateIconSettings){[CampusLoginPreviewForm]::new()}else{[Windows.Forms.Form]::new()}
+$form.SuspendLayout()
 $form.Text = '西电校园网自动登录'; $form.Font = [Drawing.Font]::new('Microsoft YaHei UI',10)
 $form.AutoScaleMode = 'Dpi'; $form.AutoScaleDimensions = [Drawing.SizeF]::new(96,96)
-$form.ClientSize = [Drawing.Size]::new(720,570); $form.MinimumSize = [Drawing.Size]::new(600,500)
+$form.ClientSize = [Drawing.Size]::new(720,650); $form.MinimumSize = [Drawing.Size]::new(600,500)
 $form.StartPosition = 'CenterScreen'; $form.AutoScroll = $true
-$form.Icon = [Drawing.SystemIcons]::Information; $form.ShowInTaskbar = [bool]$settings.showTaskbarIcon
+$form.Icon = [Drawing.SystemIcons]::Information; $form.ShowInTaskbar = !$settings.hideTaskbarIcons -and [bool]$settings.showTaskbarIcon
 $root = New-Stack; $root.Padding = [Windows.Forms.Padding]::new(24,20,24,14); $form.Controls.Add($root)
 $header = New-Stack
 Add-StackRow $header (New-Text '校园网自动登录' 19 $true)
@@ -94,9 +109,12 @@ Add-StackRow $root $fields
 $options = New-Stack
 $enabledCheck = New-Check '启用校园网自动认证' ([bool]$settings.enabled)
 $autoCheck = New-Check '登录 Windows 后在后台启动' (Test-Path -LiteralPath $startupPath)
+$hideIconsCheck = New-Check '隐藏任务栏图标（含右下角托盘）' ([bool]$settings.hideTaskbarIcons)
+$iconHint = New-Text '图标选项立即生效并保存。隐藏后仍在后台运行，可从开始菜单打开。' 9
+$iconHint.ForeColor = [Drawing.Color]::DimGray
 $taskbarCheck = New-Check '设置窗口打开时，在任务栏显示图标' ([bool]$settings.showTaskbarIcon)
 $trayCheck = New-Check '在右下角通知区域显示托盘图标' ([bool]$settings.showTrayIcon)
-foreach ($check in @($enabledCheck,$autoCheck,$taskbarCheck,$trayCheck)) { Add-StackRow $options $check }
+foreach ($control in @($hideIconsCheck,$iconHint,$taskbarCheck,$trayCheck,$enabledCheck,$autoCheck)) { Add-StackRow $options $control }
 $options.Margin = [Windows.Forms.Padding]::new(0,0,0,14); Add-StackRow $root $options
 $actions = [Windows.Forms.FlowLayoutPanel]::new(); $actions.AutoSize = $true
 $actions.AutoSizeMode = 'GrowAndShrink'; $actions.Dock = 'Top'; $actions.WrapContents = $true
@@ -110,19 +128,35 @@ $footer = New-Text '密码仅通过 Windows 本机账户加密保存。隐藏图
 $footer.ForeColor = [Drawing.Color]::DimGray; Add-StackRow $root $footer
 function Update-Wrapping {
     $width = [Math]::Max(240,$form.ClientSize.Width - $root.Padding.Horizontal - 28)
-    foreach ($label in @($intro,$footer)) { $label.MaximumSize = [Drawing.Size]::new($width,0) }
+    foreach ($label in @($intro,$footer,$iconHint)) { $label.MaximumSize = [Drawing.Size]::new($width,0) }
     foreach ($label in @($statusTitle,$statusLabel,$detailLabel)) { $label.MaximumSize = [Drawing.Size]::new([Math]::Max(200,$width - $statusCard.Padding.Horizontal),0) }
 }
 $form.Add_Resize({ Update-Wrapping }); Update-Wrapping
 $tray = [Windows.Forms.NotifyIcon]::new(); $tray.Icon = [Drawing.SystemIcons]::Information
-$tray.Text = '西电校园网自动登录'; $tray.Visible = !$ValidateUi -and [bool]$settings.showTrayIcon
+$tray.Text = '西电校园网自动登录'; $tray.Visible = !$ValidateUi -and !$settings.hideTaskbarIcons -and [bool]$settings.showTrayIcon
 $menu = [Windows.Forms.ContextMenuStrip]::new()
 $showItem = $menu.Items.Add('打开设置'); $pauseItem = $menu.Items.Add('暂停自动认证'); $exitItem = $menu.Items.Add('退出后台程序')
 $tray.ContextMenuStrip = $menu
 function Show-Settings { $form.Show(); $form.WindowState = 'Normal'; [void]$form.Activate() }
-function Apply-Visibility { $form.ShowInTaskbar=$taskbarCheck.Checked; $tray.Visible=(!$ValidateUi -and $trayCheck.Checked); Write-UiState }
+function Apply-Visibility {
+    $hidden = $hideIconsCheck.Checked
+    $form.ShowInTaskbar = !$hidden -and $taskbarCheck.Checked
+    $tray.Visible = !$ValidateUi -and !$hidden -and $trayCheck.Checked
+    $taskbarCheck.Enabled = !$hidden; $trayCheck.Enabled = !$hidden
+    Write-UiState
+}
+function Save-Visibility {
+    try {
+        Apply-Visibility
+        if(!$ValidateUi -or $ValidateIconSettings){Save-IconPreferences $hideIconsCheck.Checked $taskbarCheck.Checked $trayCheck.Checked}
+    } catch {
+        if($ValidateUi){throw}
+        [void][Windows.Forms.MessageBox]::Show('图标设置未能保存，请检查程序数据目录。','保存图标设置')
+    }
+}
 $showItem.Add_Click({ Show-Settings }); $tray.Add_DoubleClick({ Show-Settings })
-$taskbarCheck.Add_CheckedChanged({ Apply-Visibility }); $trayCheck.Add_CheckedChanged({ Apply-Visibility })
+$hideIconsCheck.Add_CheckedChanged({ Save-Visibility })
+$taskbarCheck.Add_CheckedChanged({ Save-Visibility }); $trayCheck.Add_CheckedChanged({ Save-Visibility })
 $hideButton.Add_Click({ $form.Hide() })
 $logButton.Add_Click({ if (Test-Path -LiteralPath $script:LogPath) { Start-Process -FilePath "$env:SystemRoot\System32\notepad.exe" -ArgumentList ('"' + $script:LogPath + '"') } })
 $saveButton.Add_Click({
@@ -138,7 +172,7 @@ $saveButton.Add_Click({
             if ($fresh.username -ne $userBox.Text.Trim()) { throw '更换账号时请重新填写密码。' }
             $protected = $fresh.protectedPassword
         }
-        Write-JsonAtomic $script:ConfigPath @{ version=2; ssids=$ssids; username=$userBox.Text.Trim(); protectedPassword=$protected; enabled=$enabledCheck.Checked; showTaskbarIcon=$taskbarCheck.Checked; showTrayIcon=$trayCheck.Checked }
+        Write-JsonAtomic $script:ConfigPath @{ version=3; ssids=$ssids; username=$userBox.Text.Trim(); protectedPassword=$protected; enabled=$enabledCheck.Checked; hideTaskbarIcons=$hideIconsCheck.Checked; showTaskbarIcon=$taskbarCheck.Checked; showTrayIcon=$trayCheck.Checked }
         Set-Autostart $autoCheck.Checked; Apply-Visibility
         $passwordBox.Clear(); if ($protected) { $passwordBox.PlaceholderText = '已保存，留空保持原密码' }
         [IO.File]::WriteAllText((Join-Path $script:DataRoot 'retry.request'),''); Start-Monitor
@@ -152,7 +186,7 @@ $exitItem.Add_Click({ Exit-Application }); $quitButton.Add_Click({ Exit-Applicat
 $form.Add_FormClosing({ param($sender,$eventArgs) if (!$script:MayExit) { $eventArgs.Cancel=$true; $form.Hide() } })
 $context = [Windows.Forms.ApplicationContext]::new()
 function Write-UiState {
-    if(!$ValidateUi){Write-JsonAtomic (Join-Path $script:DataRoot 'ui-state.json') @{pid=$PID;visible=$form.Visible;showTaskbarIcon=$form.ShowInTaskbar;showTrayIcon=$tray.Visible;mode='EventDriven';updated=[DateTimeOffset]::Now.ToString('o')}}
+    if(!$ValidateUi){Write-JsonAtomic (Join-Path $script:DataRoot 'ui-state.json') @{pid=$PID;visible=$form.Visible;hideTaskbarIcons=$hideIconsCheck.Checked;showTaskbarIcon=$form.ShowInTaskbar;showTrayIcon=$tray.Visible;mode='EventDriven';updated=[DateTimeOffset]::Now.ToString('o')}}
 }
 function Update-ApplicationState {
     try {
@@ -179,17 +213,31 @@ $watcher.Add_Created($onChange);$watcher.Add_Changed($onChange);$watcher.Add_Ren
 $form.Add_VisibleChanged({Write-UiState})
 $form.Add_FormClosed({$context.ExitThread()})
 $form.ResumeLayout($true)
-$form.Add_Shown({
+function Fit-WindowHeight {
     $available = [Windows.Forms.Screen]::FromControl($form).WorkingArea
-    if ($form.Height -gt $available.Height - 30) { $form.Height = [Math]::Max($form.MinimumSize.Height,$available.Height - 30) }
-})
+    $preferred = $root.PreferredSize.Height + ($form.Height - $form.ClientSize.Height) + 8
+    $form.Height = [Math]::Max($form.MinimumSize.Height,[Math]::Min($preferred,$available.Height - 30))
+}
+$form.Add_Shown({Fit-WindowHeight})
 try {
-    if($ValidateUi){
+    Apply-Visibility
+    if($ValidateIconSettings){
+        [void]$form.Handle
+        if($ValidateIconSettings -eq 'Hide'){$hideIconsCheck.Checked=$true}
+        elseif($ValidateIconSettings -eq 'Restore'){$hideIconsCheck.Checked=$false}
+        $stored=Read-Settings
+        [pscustomobject]@{hideOptionPresent=([bool]$hideIconsCheck);hideOptionChecked=$hideIconsCheck.Checked;storedHideTaskbarIcons=$stored.hideTaskbarIcons;showTaskbarIcon=$form.ShowInTaskbar;showTrayIcon=$tray.Visible;configuredTrayVisible=(!$hideIconsCheck.Checked -and $trayCheck.Checked);individualOptionsEnabled=($taskbarCheck.Enabled -and $trayCheck.Enabled);windowVisible=$form.Visible} | ConvertTo-Json
+    }elseif($ValidateUi){
         if($UiScale -ne 1){$form.Scale([Drawing.SizeF]::new($UiScale,$UiScale));Update-Wrapping}
+        # Render a real laid-out window outside the desktop without activation.
+        $form.StartPosition='Manual'; $form.Location=[Drawing.Point]::new(-30000,-30000)
         $form.Show(); [Windows.Forms.Application]::DoEvents(); $form.PerformLayout()
+        Fit-WindowHeight; $form.PerformLayout()
         if($RenderUi){$bitmap=[Drawing.Bitmap]::new($form.Width,$form.Height);try{$form.DrawToBitmap($bitmap,[Drawing.Rectangle]::new(0,0,$form.Width,$form.Height));$bitmap.Save($RenderUi,[Drawing.Imaging.ImageFormat]::Png)}finally{$bitmap.Dispose()}}
         $buttonsFit=($actions.Controls | ForEach-Object {$_.PreferredSize.Width -le $_.Width -and $_.PreferredSize.Height -le $_.Height}) -notcontains $false
-        [pscustomobject]@{passwordMasked=$passwordBox.UseSystemPasswordChar;layout='TableLayoutPanel';dpi=$form.DeviceDpi;scale=$UiScale;taskbarOptionPresent=([bool]$taskbarCheck);trayOptionPresent=([bool]$trayCheck);buttonsFit=$buttonsFit;footerVisible=($footer.Bounds.Bottom -le $root.Height);formWidth=$form.Width;formHeight=$form.Height} | ConvertTo-Json
+        $optionRowsDoNotOverlap=$true
+        for($row=1;$row -lt $options.Controls.Count;$row++){if($options.Controls[$row-1].Bottom -gt $options.Controls[$row].Top){$optionRowsDoNotOverlap=$false}}
+        [pscustomobject]@{passwordMasked=$passwordBox.UseSystemPasswordChar;layout='TableLayoutPanel';dpi=$form.DeviceDpi;scale=$UiScale;hideTaskbarOptionPresent=([bool]$hideIconsCheck);hideTaskbarOptionFits=($hideIconsCheck.PreferredSize.Width -le $hideIconsCheck.Width);optionRowsDoNotOverlap=$optionRowsDoNotOverlap;taskbarOptionPresent=([bool]$taskbarCheck);trayOptionPresent=([bool]$trayCheck);buttonsFit=$buttonsFit;footerVisible=($footer.Bounds.Bottom -le $root.Height);formWidth=$form.Width;formHeight=$form.Height} | ConvertTo-Json
         $form.Hide()
     }else{
         # Create the dispatch handle without showing/activating a background form.

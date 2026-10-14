@@ -18,6 +18,8 @@ try {
     $resolvedRuntime = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File $bootstrap -CheckRuntime
     Assert ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath ([string]$resolvedRuntime))) 'Windows PowerShell 5.1 startup entry failed'
     . (Join-Path $projectRoot 'Common.ps1')
+    & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'IconSettings.Tests.ps1')
+    Assert ($LASTEXITCODE -eq 0) 'Icon visibility regression tests failed'
     & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'SilentStart.Tests.ps1')
     Assert ($LASTEXITCODE -eq 0) 'Silent startup regression tests failed'
     & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -File (Join-Path $PSScriptRoot 'EventMode.Tests.ps1')
@@ -69,7 +71,7 @@ try {
     }
     Write-JsonAtomic $script:ConfigPath @{version=1;username='student-test';protectedPassword='';ssids=@('stu-xdwlan');enabled=$true}
     $migrated=Read-Settings
-    Assert ($migrated.showTaskbarIcon -and $migrated.showTrayIcon) 'Legacy settings migration failed'
+    Assert ($migrated.showTaskbarIcon -and $migrated.showTrayIcon -and !$migrated.hideTaskbarIcons) 'Legacy settings migration failed'
     $migrated.showTaskbarIcon=$false; $migrated.showTrayIcon=$false
     Write-JsonAtomic $script:ConfigPath $migrated
     $reloaded=Read-Settings
@@ -86,7 +88,7 @@ try {
             $output = & (Join-Path $PSHOME 'pwsh.exe') -NoLogo -NoProfile -STA -File (Join-Path $projectRoot 'App.ps1') -ValidateUi -UiScale $scale
             Assert ($LASTEXITCODE -eq 0) 'UI validation process failed'
             $report=$output -join "`n" | ConvertFrom-Json
-            Assert ($report.passwordMasked -and $report.buttonsFit -and $report.footerVisible -and $report.taskbarOptionPresent -and $report.trayOptionPresent) ('UI layout validation failed at scale ' + $scale)
+            Assert ($report.passwordMasked -and $report.buttonsFit -and $report.footerVisible -and $report.hideTaskbarOptionPresent -and $report.hideTaskbarOptionFits -and $report.optionRowsDoNotOverlap -and $report.taskbarOptionPresent -and $report.trayOptionPresent) ('UI layout validation failed at scale ' + $scale)
         }
     }
     Write-Output ('PASS: Windows PowerShell 5.1 bootstrap, protocol vectors, redirect guards, settings migration, icon persistence, password encryption' + $(if(!$SkipUi){', UI layout sizes'}else{''}) + '. No campus login was submitted.')

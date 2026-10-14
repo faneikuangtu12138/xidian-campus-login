@@ -19,12 +19,20 @@ function Write-JsonAtomic($Path, $Value) {
     [IO.File]::Move($temp, $Path, $true)
 }
 function Read-Settings {
-    $defaults = [ordered]@{ ssids = @('stu-xdwlan'); username = ''; protectedPassword = ''; enabled = $true; showTaskbarIcon = $true; showTrayIcon = $true; version = 2 }
+    $defaults = [ordered]@{ ssids = @('stu-xdwlan'); username = ''; protectedPassword = ''; enabled = $true; hideTaskbarIcons = $false; showTaskbarIcon = $true; showTrayIcon = $true; version = 3 }
     if (Test-Path -LiteralPath $script:ConfigPath) {
         $stored = Get-Content -LiteralPath $script:ConfigPath -Raw | ConvertFrom-Json
         foreach ($property in $stored.PSObject.Properties) { $defaults[$property.Name] = $property.Value }
     }
     return [pscustomobject]$defaults
+}
+function Save-IconPreferences([bool]$HideTaskbarIcons, [bool]$ShowTaskbarIcon, [bool]$ShowTrayIcon) {
+    $fresh = Read-Settings
+    $fresh.version = 3
+    $fresh.hideTaskbarIcons = $HideTaskbarIcons
+    $fresh.showTaskbarIcon = $ShowTaskbarIcon
+    $fresh.showTrayIcon = $ShowTrayIcon
+    Write-JsonAtomic $script:ConfigPath $fresh
 }
 function Set-Autostart([bool]$Enabled) {
     $startupPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'XidianCampusLogin.lnk'

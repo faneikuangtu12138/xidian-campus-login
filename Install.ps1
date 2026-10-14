@@ -36,7 +36,7 @@ foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,[Secu
     [void]$acl.AddAccessRule($rule)
 }
 [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($script:DataRoot),$acl)
-$settings = Read-Settings; $settings.version=2
+$settings = Read-Settings; $settings.version=3
 Write-JsonAtomic $script:ConfigPath $settings
 function Write-AppShortcut([string]$Path) {
     [CampusLogin.BackgroundProcess]::SaveShortcut($Path,(Join-Path $destinationRoot 'CampusLogin.exe'),'',$destinationRoot,'西电校园网自动登录 · 打开设置')
